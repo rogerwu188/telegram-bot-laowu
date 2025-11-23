@@ -2,22 +2,30 @@ from telegram.ext import Application, MessageHandler, CommandHandler, filters
 from telegram import Update
 from telegram.ext import ContextTypes
 import os
-from openai import OpenAI
 
 # 配置
 TELEGRAM_TOKEN = '8166576314:AAEZvY5L0hBwbVJThe6bw2BNVARie285vHI'
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '你的OpenAI_API_Key')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 
 # 初始化 OpenAI 客户端
-client = OpenAI(api_key=OPENAI_API_KEY)
+openai_client = None
+if OPENAI_API_KEY:
+    try:
+        from openai import OpenAI
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+        print("✅ OpenAI client initialized successfully")
+    except Exception as e:
+        print(f"❌ Failed to initialize OpenAI client: {e}")
+else:
+    print("⚠️  OPENAI_API_KEY not set")
 
-# 存储用户对话历史（简单实现，生产环境建议使用数据库）
+# 存储用户对话历史
 conversation_history = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理 /start 命令"""
     user_id = update.effective_user.id
-    conversation_history[user_id] = []  # 重置对话历史
+    conversation_history[user_id] = []
     
     await update.message.reply_text("""
 👋 你好！我是老吴的智能助手 RW
@@ -75,6 +83,13 @@ Twitter: https://x.com/121980719Wu
 
 async def chat_with_gpt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """使用 ChatGPT 回复消息"""
+    # 检查 OpenAI 客户端
+    if not openai_client:
+        await update.message.reply_text(
+            "❌ ChatGPT 功能未配置\n\n请在 Railway Variables 中设置 OPENAI_API_KEY"
+        )
+        return
+    
     user_id = update.effective_user.id
     user_message = update.message.text
     
@@ -82,23 +97,23 @@ async def chat_with_gpt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in conversation_history:
         conversation_history[user_id] = []
     
-    # 添加用户消息到历史
+    # 添加用户消息
     conversation_history[user_id].append({
         "role": "user",
         "content": user_message
     })
     
-    # 限制历史记录长度（避免 token 过多）
+    # 限制历史长度
     if len(conversation_history[user_id]) > 20:
         conversation_history[user_id] = conversation_history[user_id][-20:]
     
     try:
-        # 发送"正在输入"状态
+        # 显示正在输入
         await update.message.chat.send_action("typing")
         
-        # 调用 ChatGPT API
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",  # 使用 GPT-4o-mini 模型，性价比高
+        # 调用 ChatGPT
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
@@ -110,10 +125,10 @@ async def chat_with_gpt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             max_tokens=1000
         )
         
-        # 获取 ChatGPT 的回复
+        # 获取回复
         assistant_message = response.choices[0].message.content
         
-        # 添加助手回复到历史
+        # 添加到历史
         conversation_history[user_id].append({
             "role": "assistant",
             "content": assistant_message
@@ -123,35 +138,39 @@ async def chat_with_gpt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(assistant_message)
         
     except Exception as e:
-        error_message = f"❌ 抱歉，处理您的消息时出错了：{str(e)}\n\n请稍后重试或联系管理员。"
-        await update.message.reply_text(error_message)
-        print(f"Error: {e}")
+        error_msg = f"❌ 处理消息时出错：{str(e)}\n\n"
+        error_msg += "请检查：\n"
+        error_msg += "1. OPENAI_API_KEY 是否正确\n"
+        error_msg += "2. OpenAI 账户是否有余额\n"
+        error_msg += "3. 网络连接是否正常"
+        
+        await update.message.reply_text(error_msg)
+        print(f"❌ Error in chat_with_gpt: {e}")
 
 def main():
     """主函数"""
-    # 创建 Application 实例
+    print("=" * 50)
+    print("🤖 Telegram Bot with ChatGPT")
+    print("=" * 50)
+    print(f"OpenAI API Key: {'✅ Configured' if OPENAI_API_KEY else '❌ Not set'}")
+    print(f"OpenAI Client: {'✅ Ready' if openai_client else '❌ Not initialized'}")
+    print("=" * 50)
+    
+    # 创建 Application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # 添加命令处理器
+    # 添加处理器
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("reset", reset_command))
+    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_with_gpt))
     
-    # 添加欢迎新成员处理器
-    application.add_handler(MessageHandler(
-        filters.StatusUpdate.NEW_CHAT_MEMBERS, 
-        welcome
-    ))
-    
-    # 添加 ChatGPT 消息处理器（处理所有文本消息，排除命令）
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND, 
-        chat_with_gpt
-    ))
-    
-    # 启动机器人
-    print("🤖 Bot is starting with ChatGPT integration...")
+    # 启动
+    print("✅ Bot is running...")
+    print("=" * 50)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
+How to Deploy a Python Telegram Bot Service - Manus
