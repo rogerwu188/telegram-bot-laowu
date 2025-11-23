@@ -173,4 +173,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-How to Deploy a Python Telegram Bot Service - Manus
