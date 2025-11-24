@@ -2,52 +2,55 @@ from telegram.ext import Application, MessageHandler, CommandHandler, filters
 from telegram import Update
 from telegram.ext import ContextTypes
 import os
-import sys
+import json
+import requests
 
 # 配置
 TELEGRAM_TOKEN = '8166576314:AAEZvY5L0hBwbVJThe6bw2BNVARie285vHI'
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
-
-# 初始化 OpenAI 客户端
-openai_client = None
-if OPENAI_API_KEY:
-    try:
-        # 导入 OpenAI 并初始化
-        import openai
-        from openai import OpenAI
-        
-        # 打印版本信息
-        print(f"📦 OpenAI library version: {openai.__version__}")
-        
-        # 简单初始化，不传递任何额外参数
-        openai_client = OpenAI(
-            api_key=OPENAI_API_KEY
-        )
-        
-        # 测试连接
-        print("🔍 Testing OpenAI connection...")
-        test_response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": "test"}],
-            max_tokens=5
-        )
-        print("✅ OpenAI client initialized and tested successfully")
-        
-    except ImportError as e:
-        print(f"❌ Failed to import OpenAI: {e}")
-        print("💡 Please ensure 'openai' is in requirements.txt")
-        openai_client = None
-        
-    except Exception as e:
-        print(f"❌ Failed to initialize OpenAI client: {e}")
-        print(f"   Error type: {type(e).__name__}")
-        print(f"   Error details: {str(e)}")
-        openai_client = None
-else:
-    print("⚠️  OPENAI_API_KEY not set")
+OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 
 # 存储用户对话历史
 conversation_history = {}
+
+def call_chatgpt(messages):
+    """使用 HTTP requests 直接调用 OpenAI API"""
+    if not OPENAI_API_KEY:
+        return None, "API Key 未配置"
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
+    }
+    
+    data = {
+        "model": "gpt-4o-mini",
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": 1000
+    }
+    
+    try:
+        response = requests.post(
+            OPENAI_API_URL,
+            headers=headers,
+            json=data,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result['choices'][0]['message']['content'], None
+        else:
+            error_msg = f"API 错误 {response.status_code}: {response.text[:200]}"
+            return None, error_msg
+            
+    except requests.exceptions.Timeout:
+        return None, "请求超时，请重试"
+    except requests.exceptions.RequestException as e:
+        return None, f"网络错误: {str(e)[:100]}"
+    except Exception as e:
+        return None, f"未知错误: {str(e)[:100]}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理 /start 命令"""
@@ -110,14 +113,11 @@ Twitter: https://x.com/121980719Wu
 
 async def chat_with_gpt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """使用 ChatGPT 回复消息"""
-    # 检查 OpenAI 客户端
-    if not openai_client:
+    # 检查 API Key
+    if not OPENAI_API_KEY:
         await update.message.reply_text(
             "❌ ChatGPT 功能未配置\n\n"
-            "请检查：\n"
-            "1. Railway Variables 中是否设置了 OPENAI_API_KEY\n"
-            "2. API Key 是否有效\n"
-            "3. 查看 Railway Deploy Logs 了解详情"
+            "请在 Railway Variables 中设置 OPENAI_API_KEY"
         )
         return
     
@@ -142,22 +142,29 @@ async def chat_with_gpt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 显示正在输入
         await update.message.chat.send_action("typing")
         
-        # 调用 ChatGPT
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "你是老吴的智能助手，名叫 RW。你聪明、友好、幽默，擅长回答各种问题。回答要简洁明了，适合在 Telegram 聊天中阅读。"
-                },
-                *conversation_history[user_id]
-            ],
-            temperature=0.7,
-            max_tokens=1000
-        )
+        # 准备消息
+        messages = [
+            {
+                "role": "system",
+                "content": "你是老吴的智能助手，名叫 RW。你聪明、友好、幽默，擅长回答各种问题。回答要简洁明了，适合在 Telegram 聊天中阅读。"
+            },
+            *conversation_history[user_id]
+        ]
         
-        # 获取回复
-        assistant_message = response.choices[0].message.content
+        # 调用 ChatGPT
+        assistant_message, error = call_chatgpt(messages)
+        
+        if error:
+            # 发生错误
+            error_msg = f"❌ 调用 ChatGPT 时出错\n\n{error}\n\n"
+            error_msg += "请检查：\n"
+            error_msg += "1. OPENAI_API_KEY 是否正确\n"
+            error_msg += "2. OpenAI 账户是否有余额\n"
+            error_msg += "3. 网络连接是否正常"
+            await update.message.reply_text(error_msg)
+            # 移除最后添加的用户消息
+            conversation_history[user_id].pop()
+            return
         
         # 添加到历史
         conversation_history[user_id].append({
@@ -169,25 +176,31 @@ async def chat_with_gpt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(assistant_message)
         
     except Exception as e:
-        error_msg = f"❌ 处理消息时出错\n\n"
-        error_msg += f"错误类型：{type(e).__name__}\n"
-        error_msg += f"错误信息：{str(e)[:200]}\n\n"
-        error_msg += "请检查：\n"
-        error_msg += "1. OPENAI_API_KEY 是否正确\n"
-        error_msg += "2. OpenAI 账户是否有余额\n"
-        error_msg += "3. 网络连接是否正常"
-        
+        error_msg = f"❌ 处理消息时出错\n\n{str(e)[:200]}"
         await update.message.reply_text(error_msg)
         print(f"❌ Error in chat_with_gpt: {e}")
+        # 移除最后添加的用户消息
+        if conversation_history[user_id]:
+            conversation_history[user_id].pop()
 
 def main():
     """主函数"""
     print("=" * 60)
-    print("🤖 Telegram Bot with ChatGPT")
+    print("🤖 Telegram Bot with ChatGPT (HTTP API)")
     print("=" * 60)
-    print(f"Python version: {sys.version}")
     print(f"OpenAI API Key: {'✅ Configured' if OPENAI_API_KEY else '❌ Not set'}")
-    print(f"OpenAI Client: {'✅ Ready' if openai_client else '❌ Not initialized'}")
+    print(f"API URL: {OPENAI_API_URL}")
+    
+    # 测试 API 连接
+    if OPENAI_API_KEY:
+        print("🔍 Testing OpenAI API connection...")
+        test_messages = [{"role": "user", "content": "test"}]
+        response, error = call_chatgpt(test_messages)
+        if error:
+            print(f"❌ API test failed: {error}")
+        else:
+            print("✅ API test successful")
+    
     print("=" * 60)
     
     # 创建 Application
