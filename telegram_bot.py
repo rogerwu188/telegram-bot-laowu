@@ -2,6 +2,7 @@ from telegram.ext import Application, MessageHandler, CommandHandler, filters
 from telegram import Update
 from telegram.ext import ContextTypes
 import os
+import sys
 
 # 配置
 TELEGRAM_TOKEN = '8166576314:AAEZvY5L0hBwbVJThe6bw2BNVARie285vHI'
@@ -11,11 +12,37 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 openai_client = None
 if OPENAI_API_KEY:
     try:
+        # 导入 OpenAI 并初始化
+        import openai
         from openai import OpenAI
-        openai_client = OpenAI(api_key=OPENAI_API_KEY)
-        print("✅ OpenAI client initialized successfully")
+        
+        # 打印版本信息
+        print(f"📦 OpenAI library version: {openai.__version__}")
+        
+        # 简单初始化，不传递任何额外参数
+        openai_client = OpenAI(
+            api_key=OPENAI_API_KEY
+        )
+        
+        # 测试连接
+        print("🔍 Testing OpenAI connection...")
+        test_response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=5
+        )
+        print("✅ OpenAI client initialized and tested successfully")
+        
+    except ImportError as e:
+        print(f"❌ Failed to import OpenAI: {e}")
+        print("💡 Please ensure 'openai' is in requirements.txt")
+        openai_client = None
+        
     except Exception as e:
         print(f"❌ Failed to initialize OpenAI client: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        print(f"   Error details: {str(e)}")
+        openai_client = None
 else:
     print("⚠️  OPENAI_API_KEY not set")
 
@@ -86,7 +113,11 @@ async def chat_with_gpt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 检查 OpenAI 客户端
     if not openai_client:
         await update.message.reply_text(
-            "❌ ChatGPT 功能未配置\n\n请在 Railway Variables 中设置 OPENAI_API_KEY"
+            "❌ ChatGPT 功能未配置\n\n"
+            "请检查：\n"
+            "1. Railway Variables 中是否设置了 OPENAI_API_KEY\n"
+            "2. API Key 是否有效\n"
+            "3. 查看 Railway Deploy Logs 了解详情"
         )
         return
     
@@ -138,7 +169,9 @@ async def chat_with_gpt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(assistant_message)
         
     except Exception as e:
-        error_msg = f"❌ 处理消息时出错：{str(e)}\n\n"
+        error_msg = f"❌ 处理消息时出错\n\n"
+        error_msg += f"错误类型：{type(e).__name__}\n"
+        error_msg += f"错误信息：{str(e)[:200]}\n\n"
         error_msg += "请检查：\n"
         error_msg += "1. OPENAI_API_KEY 是否正确\n"
         error_msg += "2. OpenAI 账户是否有余额\n"
@@ -149,12 +182,13 @@ async def chat_with_gpt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """主函数"""
-    print("=" * 50)
+    print("=" * 60)
     print("🤖 Telegram Bot with ChatGPT")
-    print("=" * 50)
+    print("=" * 60)
+    print(f"Python version: {sys.version}")
     print(f"OpenAI API Key: {'✅ Configured' if OPENAI_API_KEY else '❌ Not set'}")
     print(f"OpenAI Client: {'✅ Ready' if openai_client else '❌ Not initialized'}")
-    print("=" * 50)
+    print("=" * 60)
     
     # 创建 Application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -168,7 +202,7 @@ def main():
     
     # 启动
     print("✅ Bot is running...")
-    print("=" * 50)
+    print("=" * 60)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
